@@ -1,0 +1,6 @@
+allowBuilds:
+  # esbuild's postinstall only re-downloads/validates the binary; the binary itself
+  # ships via @esbuild/win32-x64 (optional dep), so the script can stay disabled.
+  esbuild: false
+minimumReleaseAgeExclude:
+  - lucide-react@1.44.0

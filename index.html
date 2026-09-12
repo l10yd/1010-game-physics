@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23131c16'/%3E%3Crect x='9' y='9' width='20' height='20' rx='6' fill='%23c5dda8'/%3E%3Crect x='35' y='9' width='20' height='20' rx='6' fill='%238ab96a'/%3E%3Crect x='9' y='35' width='20' height='20' rx='6' fill='%23a8c97f'/%3E%3Crect x='35' y='35' width='20' height='20' rx='6' fill='%23e5a373'/%3E%3C/svg%3E" />
+    <title>1010 Physics</title>
+    <script>
+      // This is the DEV entry: it references /src/main.tsx, which only the Vite dev server can compile.
+      // Opened from disk (file://) it can never run — show a helpful hint instead of a white screen.
+      if (location.protocol === 'file:') {
+        addEventListener('DOMContentLoaded', () => {
+          // The built dist/index.html inlines the bundle and has no main.tsx script tag — let it run.
+          if (!document.querySelector('script[src$="main.tsx"]')) return;
+          document.body.innerHTML = '<div style="min-height:100dvh;display:grid;place-content:center;gap:14px;font:15px/1.6 system-ui,sans-serif;color:#e3e9e4;background:#101714;text-align:center;padding:24px">'
+            + '<strong style="font-size:20px">Это исходная страница проекта</strong>'
+            + '<span>По двойному клику она работать не может: исходники должен собирать Vite.</span>'
+            + '<a href="dist/index.html" style="color:#a5d7af;font-size:17px">Открыть собранную игру → dist/index.html</a>'
+            + '<span style="opacity:.7">или запусти <code>pnpm run dev</code> и открой http://localhost:5173</span>'
+            + '</div>';
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
