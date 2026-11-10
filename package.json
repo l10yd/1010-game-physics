@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "bench": "node tests/benchmark.mjs",
     "build": "vite build",
     "postbuild": "node scripts/file-safe.mjs",
     "preview": "vite preview"

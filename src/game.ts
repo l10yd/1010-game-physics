@@ -1,4 +1,5 @@
 import Matter from 'matter-js';
+import { PointIndex } from './spatial';
 
 const { Engine, Bodies, Body, Composite, Query, Sleeping } = Matter;
 export const SIZE = 500;
@@ -170,7 +171,9 @@ export class PhysicsGame {
   // Render caches: device-pixel scale, per-(color,special) block sprites, prebuilt board grid.
   scale=1; sprites=new Map<string,HTMLCanvasElement>(); spriteLogical=0; spriteHalf=0;
   gridLayer:HTMLCanvasElement|null=null;
-  drawList:Piece[]=[]; bins:Array<Array<{p:Piece;c:Cell}>>|null=null;
+  drawList:Piece[]=[]; bins:Cell[][]|null=null;
+  lineRows=new Uint16Array(10); lineCols=new Uint16Array(10);
+  spotIndex=new PointIndex<Piece>(STEP);
   lastDraw=0; pauseDrawn=false; ro:ResizeObserver|null=null;
   onUpdate:(s:Snapshot)=>void;
   constructor(canvas:HTMLCanvasElement,onUpdate:(s:Snapshot)=>void) {
@@ -190,8 +193,10 @@ export class PhysicsGame {
     const dpr=Math.min(window.devicePixelRatio||1,2);
     const s=Math.max(1,Math.min(2,css/SIZE*dpr));
     const px=Math.round(SIZE*s);
+    const unchanged=this.scale===s&&!!this.gridLayer&&this.canvas.width===px;
     if(this.canvas.width!==px){this.canvas.width=px;this.canvas.height=px;}
     this.scale=s;this.ctx.setTransform(s,0,0,s,0,0);
+    if(unchanged)return;
     this.buildSprites();this.buildGrid();this.pauseDrawn=false;
   }
   buildSprites(){
@@ -206,6 +211,17 @@ export class PhysicsGame {
       this.sprites.set(color+'|'+special,c);
     }
     this.spriteLogical=logical;this.spriteHalf=logical/2;
+  }
+  // Bombardment can retain colors from another theme: cache those too, at the same resolution.
+  getSprite(color:string,special:Special){
+    const key=color+'|'+special;
+    let sprite=this.sprites.get(key);
+    if(!sprite){
+      sprite=document.createElement('canvas');sprite.width=sprite.height=Math.ceil(this.spriteLogical*this.scale);
+      const ctx=sprite.getContext('2d')!;ctx.scale(this.scale,this.scale);ctx.translate(this.spriteHalf,this.spriteHalf);
+      drawBlock(ctx,0,0,color,special,41);this.sprites.set(key,sprite);
+    }
+    return sprite;
   }
   buildGrid(){
     const look=THEME_LOOK[this.themeKey];
@@ -441,13 +457,14 @@ export class PhysicsGame {
     if(!this.ammo[level])this.weapon=-1;this.emit();
   }
   checkLines(){
-    const bins=this.bins??(this.bins=Array.from({length:100},()=>[] as Array<{p:Piece;c:Cell}>));
+    const bins=this.bins??(this.bins=Array.from({length:100},()=>[] as Cell[]));
     for(const b of bins)b.length=0;
-    for(const p of this.pieces){if(p===this.dragged)continue;for(const c of p.cells){const w=this.worldCell(p,c);const col=Math.floor((w.x-20)/46),row=Math.floor((w.y-20)/46);if(col>=0&&col<10&&row>=0&&row<10)bins[row*10+col].push({p,c});}}
+    const rows=this.lineRows,cols=this.lineCols;rows.fill(0);cols.fill(0);
+    for(const p of this.pieces){if(p===this.dragged)continue;for(const c of p.cells){const w=this.worldCell(p,c);const col=Math.floor((w.x-20)/46),row=Math.floor((w.y-20)/46);if(col>=0&&col<10&&row>=0&&row<10){bins[row*10+col].push(c);rows[row]|=1<<col;cols[col]|=1<<row;}}}
     const hit=new Set<Cell>();let lines=0;
     for(let k=0;k<10;k++){
-      if(Array.from({length:10},(_,i)=>bins[k*10+i].length>0).every(Boolean)){lines++;for(let i=0;i<10;i++)bins[k*10+i].forEach(e=>hit.add(e.c));}
-      if(Array.from({length:10},(_,i)=>bins[i*10+k].length>0).every(Boolean)){lines++;for(let i=0;i<10;i++)bins[i*10+k].forEach(e=>hit.add(e.c));}
+      if(rows[k]===1023){lines++;for(let i=0;i<10;i++)for(const c of bins[k*10+i])hit.add(c);}
+      if(cols[k]===1023){lines++;for(let i=0;i<10;i++)for(const c of bins[i*10+k])hit.add(c);}
     }
     if(hit.size){const n=this.destroyCells((_,__,___,c)=>hit.has(c));this.addScore(lines*100);const level=n>=40?3:n>=30?2:n>=20?1:0;this.grantAmmo(level,level===3?3:5);this.weaponExpiry=this.elapsed+25;this.tone(680,.3,'triangle');this.emit();}
   }
@@ -557,15 +574,24 @@ export class PhysicsGame {
     }
     return n;
   }
-  layerViolation(p:Piece){
-    for(const c of p.cells){const w=this.worldCell(p,c);if(this.spotCount(w.x,w.y,p)>=2)return{x:w.x,y:w.y};}
+  buildSpotIndex(){
+    const index=this.spotIndex;index.clear();
+    for(const p of this.pieces){
+      if(p===this.dragged||p.body.isStatic)continue;
+      const co=Math.cos(p.body.angle),si=Math.sin(p.body.angle),pos=p.body.position;
+      for(const c of p.cells)index.add(pos.x+c.x*co-c.y*si,pos.y+c.x*si+c.y*co,p);
+    }
+    return index;
+  }
+  layerViolation(p:Piece,index?:PointIndex<Piece>){
+    for(const c of p.cells){const w=this.worldCell(p,c);if((index?index.count(w.x,w.y,23,p,2):this.spotCount(w.x,w.y,p))>=2)return{x:w.x,y:w.y};}
     return null;
   }
-  freeTarget(x:number,y:number,exclude:Piece){
+  freeTarget(x:number,y:number,exclude:Piece,index?:PointIndex<Piece>){
     let best:{x:number;y:number;d:number}|null=null;
     for(let row=0;row<10;row++)for(let col=0;col<10;col++){
       const cx=43+col*46,cy=43+row*46;
-      if(this.spotCount(cx,cy,exclude)>=2)continue;
+      if((index?index.count(cx,cy,23,exclude,2):this.spotCount(cx,cy,exclude))>=2)continue;
       const d=Math.hypot(cx-x,cy-y);
       if(!best||d<best.d)best={x:cx,y:cy,d};
     }
@@ -574,8 +600,9 @@ export class PhysicsGame {
   // Called after a placement: if the piece would sit on a 3rd layer, gently slide it to free space.
   checkOverstack(p:Piece){
     if(this.dying||this.over)return;
-    const v=this.layerViolation(p);if(!v)return;
-    const t=this.freeTarget(v.x,v.y,p);if(!t)return;
+    const index=this.buildSpotIndex();
+    const v=this.layerViolation(p,index);if(!v)return;
+    const t=this.freeTarget(v.x,v.y,p,index);if(!t)return;
     if(!this.nudge)this.nudge={p,tx:t.x,ty:t.y,t:2.5,tries:0};
     this.wake(p.body);this.tone(160,.12,'triangle',.03);
   }
@@ -749,8 +776,8 @@ export class PhysicsGame {
         const b=p.body;const dx=n.tx-b.position.x,dy=n.ty-b.position.y;const d=Math.hypot(dx,dy);
         n.t-=dt;
         if(d<16||n.t<=0){
-          const v=this.layerViolation(p);
-          if(v&&n.tries<2){const t2=this.freeTarget(v.x,v.y,p);if(t2){n.tx=t2.x;n.ty=t2.y;n.t=2.5;n.tries++;}else this.nudge=null;}
+          const index=this.buildSpotIndex(),v=this.layerViolation(p,index);
+          if(v&&n.tries<2){const t2=this.freeTarget(v.x,v.y,p,index);if(t2){n.tx=t2.x;n.ty=t2.y;n.t=2.5;n.tries++;}else this.nudge=null;}
           else this.nudge=null;
         }else{
           this.wake(b);
@@ -764,12 +791,13 @@ export class PhysicsGame {
     this.settleTick+=dt;
     if(this.settleTick>.3&&!this.dying){
       this.settleTick=0;
+      const index=this.buildSpotIndex();
       for(const p of this.pieces){
         if(p===this.dragged||p.body.isStatic)continue;
         if(this.nudge&&this.nudge.p===p)continue;
-        const v=this.layerViolation(p);
+        const v=this.layerViolation(p,index);
         if(!v)continue;
-        const t=this.freeTarget(v.x,v.y,p);
+        const t=this.freeTarget(v.x,v.y,p,index);
         if(!t)continue;
         this.wake(p.body);
         const dx=t.x-p.body.position.x,dy=t.y-p.body.position.y,d=Math.hypot(dx,dy)||1;
@@ -795,7 +823,7 @@ export class PhysicsGame {
     if(this.dragged){const p=this.dragged,b=p.body;this.wake(b);const target={x:Math.max(38,Math.min(462,this.pointer.x-this.dragOffset.x)),y:Math.max(38,Math.min(462,this.pointer.y-this.dragOffset.y))};const dx=target.x-b.position.x,dy=target.y-b.position.y;const fx=dx*.00032-b.velocity.x*b.mass*.00018,fy=dy*.00032-b.velocity.y*b.mass*.00018;Body.applyForce(b,b.position,{x:Math.max(-.08,Math.min(.08,fx)),y:Math.max(-.08,Math.min(.08,fy))});}
     Engine.update(this.engine,1000/60);
     this.lineTick+=dt;if(this.lineTick>.3){this.lineTick=0;this.checkLines();}
-    this.burnTick+=dt;if(this.burnTick>.3){this.burnTick=0;this.destroyCells((_,__,___,c)=>!!c.burn&&this.elapsed>c.burn);}
+    this.burnTick+=dt;if(this.burnTick>.3){this.burnTick=0;if(this.pieces.some(p=>p.cells.some(c=>!!c.burn&&this.elapsed>c.burn)))this.destroyCells((_,__,___,c)=>!!c.burn&&this.elapsed>c.burn);}
     // Fire zones burn out, ignite everything inside them (burning oil slicks ignite too) and pop embers.
     const sources:Array<{x:number;y:number;r:number}>=[];
     for(const f of this.fires){f.life-=dt;sources.push(f);if(Math.random()<dt*5)this.burst(f.x+(Math.random()-.5)*f.r*.8,f.y+(Math.random()-.5)*f.r*.8,'#ffb35c',2);}
@@ -875,7 +903,7 @@ export class PhysicsGame {
       // Soft glow instead of per-block shadowBlur (canvas shadows are the #1 mobile canvas killer).
       if(p===this.dragged){const {x,y}=p.body.position;const g=ctx.createRadialGradient(x,y,8,x,y,55);g.addColorStop(0,'#83dfb766');g.addColorStop(1,'#83dfb700');ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,55,0,7);ctx.fill();}
       ctx.save();ctx.translate(p.body.position.x,p.body.position.y);ctx.rotate(p.body.angle);
-      for(const c of p.cells){const spr=this.sprites.get(c.color+'|'+(c.stone?'stone':c.special));if(spr)ctx.drawImage(spr,c.x-this.spriteHalf,c.y-this.spriteHalf,this.spriteLogical,this.spriteLogical);else drawBlock(ctx,c.x,c.y,c.color,c.stone?'stone':c.special);
+      for(const c of p.cells){const spr=this.getSprite(c.color,c.stone?'stone':c.special);ctx.drawImage(spr,c.x-this.spriteHalf,c.y-this.spriteHalf,this.spriteLogical,this.spriteLogical);
         // Burning cells flicker orange until they burn out.
         if(c.burn&&c.burn>this.elapsed){ctx.globalAlpha=.3+.28*Math.sin(this.elapsed*29+c.gx*2.7+c.gy*4.1);ctx.fillStyle='#ff8c2e';rounded(ctx,c.x-20.5,c.y-20.5,41,41,6);ctx.fill();ctx.globalAlpha=1;}
         // Frozen cells wear a cyan coat with a white sheen.

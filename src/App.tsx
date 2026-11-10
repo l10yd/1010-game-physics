@@ -38,6 +38,7 @@ export default function App(){
   const [confirmRestart,setConfirmRestart]=useState(false);
   const [ghost,setGhost]=useState<{shape:Shape;x:number;y:number;inside:boolean}|null>(null);
   const ghostRef=useRef<{shape:Shape;x:number;y:number;inside:boolean}|null>(null);
+  const ghostElementRef=useRef<HTMLDivElement|null>(null);
   const [fullscreen,setFullscreen]=useState(false);
   const [lang,setLang]=useState<Lang>(loadLang);
   const [theme,setTheme]=useState<ThemeKey>(loadTheme);
@@ -51,7 +52,18 @@ export default function App(){
   useEffect(()=>{
     if(!canvasRef.current)return;
     const instance=new PhysicsGame(canvasRef.current,setState);game.current=instance;setSound(instance.sound);instance.setTheme(theme);
-    const move=(e:PointerEvent)=>{instance.move(e.clientX,e.clientY);if(ghostRef.current){if(instance.dragSlot<0){ghostRef.current=null;setGhost(null);}else{const g={...ghostRef.current,x:e.clientX,y:e.clientY,inside:instance.isInside(e.clientX,e.clientY)};ghostRef.current=g;setGhost(g);}}};
+    const move=(e:PointerEvent)=>{
+      instance.move(e.clientX,e.clientY);
+      const previous=ghostRef.current;
+      if(!previous)return;
+      if(instance.dragSlot<0){ghostRef.current=null;setGhost(null);return;}
+      const g={...previous,x:e.clientX,y:e.clientY,inside:instance.isInside(e.clientX,e.clientY)};
+      ghostRef.current=g;
+      // Position-only input must not reconcile the entire HUD. React still owns visibility/shape.
+      if(g.inside!==previous.inside)setGhost(g);
+      const element=ghostElementRef.current;
+      if(element){element.style.left=`${g.x/PAGE_ZOOM}px`;element.style.top=`${g.y/PAGE_ZOOM}px`;}
+    };
     const up=(e:PointerEvent)=>{instance.release(false,e.clientX,e.clientY);ghostRef.current=null;setGhost(null);};
     const cancel=()=>{instance.release(true);ghostRef.current=null;setGhost(null);};
     const key=(e:KeyboardEvent)=>{if(e.code==='Space'||e.code==='Escape'){e.preventDefault();instance.togglePause();setTab('game');setConfirmRestart(false);ghostRef.current=null;setGhost(null);}if(['Digit1','Digit2','Digit3','Digit4'].includes(e.code))instance.selectWeapon(Number(e.code.slice(-1))-1);};
@@ -144,7 +156,7 @@ export default function App(){
 
     {/* Fixed overlays live in a portal: acid/mono themes put a CSS filter on .app/body,
         and a filtered ancestor would become the containing block and shove them off-center. */}
-    {ghost&&!ghost.inside&&!modal&&createPortal(<div className="drag-ghost" style={{left:ghost.x/PAGE_ZOOM,top:ghost.y/PAGE_ZOOM}}><ShapePreview shape={ghost.shape} large/></div>,document.body)}
+    {ghost&&!ghost.inside&&!modal&&createPortal(<div ref={ghostElementRef} className="drag-ghost" style={{left:(ghostRef.current?.x??ghost.x)/PAGE_ZOOM,top:(ghostRef.current?.y??ghost.y)/PAGE_ZOOM}}><ShapePreview shape={ghost.shape} large/></div>,document.body)}
 
     {modal&&createPortal(<div className={`modal-backdrop ${state.over?'slow':''}`} onClick={()=>{if(!state.over&&!confirmRestart)pause();}}>
       <section className="pause-modal" role="dialog" aria-modal="true" aria-labelledby="pause-heading" onClick={e=>e.stopPropagation()}>
